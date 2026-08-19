@@ -21,15 +21,48 @@ a family's worth of lookups) and take about 5 minutes.
 
 ## Option A — Cloudflare Worker (recommended: fastest, no credit card)
 
+There are two ways to deploy this. **Use the CLI method (A1)** — it's the reliable one. The
+dashboard has a "Pages" section and a "Workers" section that live under the same "Workers &
+Pages" nav item, and it's easy to end up in the Pages flow by mistake, which expects a whole
+static-site build (hence errors like "Output directory not found" if you paste a single script
+path in) — Pages is for hosting sites, not for a one-file backend script like this one. The CLI
+skips that ambiguity entirely.
+
+### A1. Command line (Wrangler) — do this one
+
+Needs Node.js installed on your computer (not your phone). No global install required.
+
+```
+cd bgg-proxy/cloudflare-worker
+npx wrangler login      # opens a browser tab to connect your free Cloudflare account
+npx wrangler deploy     # reads wrangler.toml + worker.js and deploys, prints your URL
+```
+
+That's it — no dashboard clicking at all. It'll print a URL like
+`https://game-shelf-bgg-proxy.YOURNAME.workers.dev`. Paste that into the app's Household tab →
+"BoardGameGeek Lookup Service" → Save → Test Connection.
+
+(`wrangler.toml` is already set up in this folder pointing at `worker.js` — you shouldn't need to
+change anything.)
+
+### A2. Dashboard only, if you'd rather not touch a command line
+
 1. Go to https://dash.cloudflare.com/ and sign up (email only, no card required for the free
    Workers plan — 100,000 requests/day free).
-2. Workers & Pages → Create → "Create Worker" → give it a name like `game-shelf-bgg-proxy` →
-   Deploy.
-3. Click "Edit code," delete the sample content, and paste in the entire contents of
-   `cloudflare-worker/worker.js` from this folder → Save and Deploy.
+2. **Workers & Pages → Create application.** On the screen that follows, make sure you're on the
+   **"Workers"** tab, not "Pages" — pick **"Create Worker"** (sometimes labeled "Hello World"),
+   name it `game-shelf-bgg-proxy`, and click **Deploy**. Don't use "Import a repository," "Upload
+   assets," or anything that asks for a build command / output directory — those are the Pages
+   flow and are the wrong path for this.
+3. Once it's deployed with the default sample code, open it and click **"Edit code"** to reach the
+   in-browser editor. Delete everything in there and paste in the entire contents of
+   `cloudflare-worker/worker.js` from this folder → **Save and deploy**.
 4. Copy the URL it gives you (looks like `https://game-shelf-bgg-proxy.YOURNAME.workers.dev`).
 5. In the app: Household tab → "BoardGameGeek Lookup Service" → paste the URL → Save → Test
    Connection.
+
+If step 2 ever dead-ends into a screen asking for a "build command" or "output directory," you're
+in the Pages flow — back out and use A1 instead.
 
 ## Option B — Azure Function
 

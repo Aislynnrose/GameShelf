@@ -1,0 +1,8 @@
+name = "game-shelf-bgg-proxy"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+# No routes/domains configured on purpose — this deploys to the free
+# workers.dev subdomain Cloudflare gives you automatically
+# (https://game-shelf-bgg-proxy.<your-subdomain>.workers.dev), which is all
+# this proxy needs.
