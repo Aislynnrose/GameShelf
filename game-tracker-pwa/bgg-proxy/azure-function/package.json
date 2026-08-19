@@ -1,0 +1,13 @@
+{
+  "name": "game-shelf-bgg-proxy",
+  "version": "1.0.0",
+  "description": "BoardGameGeek lookup proxy for Family Game Shelf (works around BGG's lack of CORS support).",
+  "main": "src/functions/*.js",
+  "scripts": {
+    "start": "func start",
+    "prestart": "npm install"
+  },
+  "dependencies": {
+    "@azure/functions": "^4.5.0"
+  }
+}
