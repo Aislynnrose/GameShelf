@@ -4,21 +4,45 @@ A installable phone app (PWA) for tracking your family's board games and keeping
 
 ## What's in this version
 
-- **Games tab** — add games with photo, difficulty, age rating, player count, play time,
-  description, keywords, and expansions/extensions (with how many extra players each adds).
-  Search by name/description/keywords, and filter by difficulty, player count, age, and max time. A "🎯 What should we play?" button picks a random game that fits your player count and time.
-- **Scoreboard tab** — start a game night, add players, enter scores round by round (auto-tracked), see live standings, and browse past game nights with full round-by-round history.
-- **Household tab** — set a household name, keep a member roster with roles (Owner/Editor/Viewer), generate an invite QR code or email, and export/import a full JSON backup of everything.
+- **Games tab** — add a game by searching BoardGameGeek: it auto-fills the photo, description,
+  player count, play time, age rating, an estimated difficulty, and a checklist of that game's
+  known expansions (tick the ones you own and it estimates the extra players each adds). Manual
+  entry is still there as a fallback/override for anything BGG doesn't have. Search your own
+  shelf by name/description/keywords, and filter by difficulty, player count, age, and max time.
+  A "🎯 What should we play?" button picks a random game that fits your player count and time.
+- **Scoreboard tab** — start a game night, add players, enter scores round by round (auto-tracked),
+  see live standings, and browse past game nights with full round-by-round history.
+- **Household tab** — set a household name, keep a member roster with roles (Owner/Editor/Viewer),
+  generate an invite QR code or email, and export/import a full JSON backup of everything.
 - Installable to your home screen, works offline, dark-themed for game-night lighting.
 
 ## Important: this version is single-device (by design, for now)
 
 Everything is stored in the browser's local database **on that one phone** — it does **not**
-sync between devices yet. The Household tab's roles and invite code are fully built out in the UI, but they're not wired to a real backend, so a second phone won't automatically see the same list yet.
+sync between devices yet. The Household tab's roles and invite code are fully built out in the
+UI, but they're not wired to a real backend, so a second phone won't automatically see the same
+list yet.
 
-**When you're ready for real multi-device sync** (everyone sees the same list, edits show up on each other's phones, invite QR/email actually adds someone), the recommended next step is wiring this up to **Firebase** (Google's free-tier app backend — Firestore for the shared data, Firebase Auth for login). The app was structured to make that swap easy: all storage calls go through `js/db.js`, so only that one file needs to be replaced with a Firestore version — the rest of the app (`js/app.js`) doesn't need to change. Just ask, and it can be built next.
+**When you're ready for real multi-device sync** (everyone sees the same list, edits show up on
+each other's phones, invite QR/email actually adds someone), the recommended next step is wiring
+this up to **Firebase** (Google's free-tier app backend — Firestore for the shared data, Firebase
+Auth for login). The app was structured to make that swap easy: all storage calls go through
+`js/db.js`, so only that one file needs to be replaced with a Firestore version — the rest of the
+app (`js/app.js`) doesn't need to change. Just ask, and it can be built next.
 
-Also note: **barcode scanning to add games** was intentionally left out of this version — there's no barcode database specific to board games, so it requires chaining a UPC lookup with a BoardGameGeek search and a manual fallback. It's a reasonable follow-up feature; ask if you'd like it added.
+## Setting up BoardGameGeek auto-fill
+
+The BGG-powered "Add a Game" search needs one small piece of free infrastructure first: see
+**`bgg-proxy/README.md`** for a 5-minute setup (a Cloudflare Worker or an Azure Function — your
+choice, both free, both included and pre-tested against sample BGG responses). Once it's deployed,
+paste its URL into the app's Household tab under "BoardGameGeek Lookup Service." Until that's
+done, "Add a Game" falls back to manual entry with a note explaining why.
+
+Also note: **barcode scanning to add games** was intentionally left out of this version, per your
+call — there's no barcode database specific to board games, so it requires chaining a UPC lookup
+with a BoardGameGeek search and a manual fallback. It's still on the list below whenever you want
+it added — it would slot in as one more way to kick off the same BGG search-and-prefill flow this
+version already has (scan → pick the matching BGG search result → same autofill).
 
 ## How to install it on your phone
 
@@ -46,11 +70,14 @@ service worker caches the app shell.
 
 A few ideas worth considering, roughly in order of impact:
 
-1. **Real multi-device sync (Firebase)** — the big one; makes the Household tab's invites and
-   roles actually functional, and lets everyone see the same shelf and scores live.
-2. **Barcode scanning** — camera scan → UPC lookup → BoardGameGeek match → manual fallback, as    discussed above.
-3. **Play stats** — most-played game, per-person win/loss record over time, "hasn't been played in X months" nudges to rediscover games in the closet.
-4. **House rules notes per game** — a free-text field for the family's own variant rules, separate from the official description.
+1. **Real multi-device sync (Firebase or Azure)** — the big one; makes the Household tab's invites
+   and roles actually functional, and lets everyone see the same shelf and scores live.
+2. **Barcode scanning** — camera scan → UPC lookup → jump straight into the BGG search already
+   built in this version → same autofill, as discussed above.
+3. **Play stats** — most-played game, per-person win/loss record over time, "hasn't been played
+   in X months" nudges to rediscover games in the closet.
+4. **House rules notes per game** — a free-text field for the family's own variant rules, separate
+   from the official description.
 5. **Wishlist / lending tracker** — games you want to buy, or games currently lent to a friend.
 6. **Push reminders** — e.g. a Friday evening nudge suggesting a quick game based on who's home.
 7. **Per-player avatars/colors** in the scoreboard for faster reading at a glance during a game.

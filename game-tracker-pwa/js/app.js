@@ -167,15 +167,145 @@ async function route() {
 window.addEventListener("hashchange", route);
 window.addEventListener("DOMContentLoaded", route);
 
+// ================================================================= BGG ===
+// Client for the small lookup proxy in bgg-proxy/ — see that folder's
+// README for why a proxy is needed (BoardGameGeek's API has no CORS
+// support) and how to deploy one for free. The app just needs its URL,
+// set once in Household → Settings.
+
+let bggEndpointCache = undefined;
+
+async function getBggEndpoint() {
+  if (bggEndpointCache === undefined) {
+    bggEndpointCache = await DB.getMeta("bggEndpoint", "");
+  }
+  return bggEndpointCache;
+}
+
+async function setBggEndpoint(url) {
+  bggEndpointCache = url;
+  await DB.setMeta("bggEndpoint", url);
+}
+
+async function bggApiCall(path) {
+  const endpoint = await getBggEndpoint();
+  if (!endpoint) throw new Error("NO_ENDPOINT");
+  const base = endpoint.replace(/\/+$/, "");
+  const res = await fetch(`${base}${path}`);
+  let body;
+  try { body = await res.json(); } catch { body = null; }
+  if (!res.ok) throw new Error((body && body.error) || `Lookup failed (${res.status})`);
+  return body;
+}
+
+async function bggSearch(query) {
+  const body = await bggApiCall(`/search?q=${encodeURIComponent(query)}`);
+  return body.results || [];
+}
+
+async function bggGameDetail(id) {
+  return bggApiCall(`/game?id=${encodeURIComponent(id)}`); // { game, expansions }
+}
+
+async function testBggEndpoint(url) {
+  const base = url.replace(/\/+$/, "");
+  const res = await fetch(`${base}/search?q=catan`);
+  if (!res.ok) throw new Error(`Service responded ${res.status}`);
+  const body = await res.json();
+  if (!Array.isArray(body.results)) throw new Error("Unexpected response shape");
+  return body.results.length;
+}
+
 // =============================================================== GAMES ===
 
 let gamesFilterState = { q: "", diffs: [], players: "", age: "", maxTime: "", panelOpen: false };
 
 async function renderGamesRoute(parts) {
-  if (parts[1] === "add") return renderGameForm(null);
+  if (parts[1] === "add") return renderAddGameChooser();
+  if (parts[1] === "add-manual") return renderGameForm(null);
   if (parts[1] === "edit" && parts[2]) return renderGameForm(parts[2]);
   if (parts[1] === "view" && parts[2]) return renderGameDetail(parts[2]);
   return renderGamesList();
+}
+
+// ------------------------------------------------------- add-game chooser --
+
+async function renderAddGameChooser() {
+  removeFab();
+  const endpoint = await getBggEndpoint();
+
+  if (!endpoint) {
+    $view.innerHTML = `
+      <h2 style="margin-top:0;">Add a Game</h2>
+      <div class="note-banner">
+        Auto-fill from BoardGameGeek isn't set up yet. Add a free lookup service once in
+        <strong>Household → BoardGameGeek Lookup Service</strong>, or add this game by hand for now.
+      </div>
+      <div class="btn-row">
+        <button class="btn secondary" id="go-settings">Set Up Lookup</button>
+        <button class="btn" id="go-manual">Enter Manually</button>
+      </div>
+    `;
+    document.getElementById("go-settings").addEventListener("click", () => { location.hash = "#household"; });
+    document.getElementById("go-manual").addEventListener("click", () => { location.hash = "#games/add-manual"; });
+    return;
+  }
+
+  $view.innerHTML = `
+    <h2 style="margin-top:0;">Add a Game</h2>
+    <label>Search BoardGameGeek</label>
+    <div style="display:flex;gap:8px;">
+      <input type="text" id="bgg-q" placeholder="Game name…" style="flex:1;" />
+      <button class="btn small" id="bgg-search-btn" style="width:auto;">Search</button>
+    </div>
+    <div id="bgg-results" style="margin-top:14px;"></div>
+    <button class="link-btn" id="go-manual" style="margin-top:10px;">Or enter a game manually →</button>
+  `;
+
+  const $q = document.getElementById("bgg-q");
+  const $results = document.getElementById("bgg-results");
+  $q.focus();
+
+  async function doSearch() {
+    const query = $q.value.trim();
+    if (!query) return;
+    $results.innerHTML = `<p style="color:var(--text-dim);">Searching BoardGameGeek…</p>`;
+    try {
+      const results = await bggSearch(query);
+      if (!results.length) {
+        $results.innerHTML = `<div class="empty-state"><div class="big">🔍</div><div>No matches on BoardGameGeek.<br/>Try a different spelling, or add it manually.</div></div>`;
+        return;
+      }
+      $results.innerHTML = `<div class="card">` + results.slice(0, 25).map((r) => `
+        <div class="session-item" data-id="${escapeHtml(r.id)}" style="cursor:pointer;">
+          <div><strong>${escapeHtml(r.name)}</strong></div>
+          <span class="pill">${escapeHtml(r.yearPublished || "")}</span>
+        </div>
+      `).join("") + `</div>`;
+      $results.querySelectorAll("[data-id]").forEach((row) => {
+        row.addEventListener("click", () => selectBggResult(row.dataset.id, row.querySelector("strong").textContent));
+      });
+    } catch (err) {
+      $results.innerHTML = `<div class="empty-state"><div class="big">⚠️</div><div>Couldn't reach the lookup service.<br/><span style="font-size:12px;">${escapeHtml(err.message)}</span></div></div>`;
+    }
+  }
+
+  async function selectBggResult(id, name) {
+    $results.innerHTML = `<p style="color:var(--text-dim);">Loading "${escapeHtml(name)}"…</p>`;
+    try {
+      const { game, expansions } = await bggGameDetail(id);
+      // Update the URL bar without re-triggering the router (so Back still makes sense).
+      history.replaceState(null, "", "#games/add-manual");
+      renderGameForm(null, { ...game, bggExpansions: expansions || [] });
+    } catch (err) {
+      $results.innerHTML = `<div class="empty-state"><div class="big">⚠️</div><div>Couldn't load that game's details.<br/><span style="font-size:12px;">${escapeHtml(err.message)}</span></div><button class="btn secondary small" id="retry-select" style="margin-top:10px;">Try Again</button></div>`;
+      document.getElementById("retry-select").addEventListener("click", () => selectBggResult(id, name));
+    }
+  }
+
+  document.getElementById("bgg-search-btn").addEventListener("click", doSearch);
+  $q.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(); } });
+  document.getElementById("go-manual").addEventListener("click", () => { location.hash = "#games/add-manual"; });
 }
 
 async function renderGamesList() {
@@ -345,18 +475,57 @@ function openQuickPick(allGames) {
 
 // ------------------------------------------------------------ game form --
 
-async function renderGameForm(id) {
+function weightToDifficulty(weight) {
+  if (!weight) return 3;
+  // BGG's "weight" is a 1.0–5.0 float; map onto our 1–5 integer scale.
+  return Math.min(5, Math.max(1, Math.round(weight)));
+}
+
+async function renderGameForm(id, prefill) {
   removeFab();
   const editing = Boolean(id);
-  const game = editing ? await DB.getGame(id) : {
+  const blank = {
     name: "", image: null, difficulty: 3, ageRating: "", minPlayers: "", maxPlayers: "",
     playTimeMin: "", playTimeMax: "", description: "", keywords: [], extensions: [], favorite: false, location: "",
   };
+  let game;
+  if (editing) {
+    game = await DB.getGame(id);
+  } else if (prefill) {
+    game = {
+      ...blank,
+      name: prefill.name || "",
+      image: prefill.image || null,
+      difficulty: weightToDifficulty(prefill.weight),
+      ageRating: prefill.minAge || "",
+      minPlayers: prefill.minPlayers || "",
+      maxPlayers: prefill.maxPlayers || "",
+      playTimeMin: prefill.minPlayTime || "",
+      playTimeMax: prefill.maxPlayTime || "",
+      description: prefill.description || "",
+      bggWeight: prefill.weight || null,
+      bggWeightVotes: prefill.weightVotes || 0,
+      bggId: prefill.id || null,
+    };
+  } else {
+    game = blank;
+  }
+
   let pendingImage = game.image || null;
   let extensions = (game.extensions || []).map((e) => ({ ...e }));
+  // Candidate expansions pulled from BGG for a freshly-searched game — the user
+  // checks off which ones their household actually owns before they're added.
+  let bggCandidates = (prefill?.bggExpansions || []).map((e) => ({
+    id: e.id,
+    name: e.name,
+    minPlayers: e.minPlayers,
+    maxPlayers: e.maxPlayers,
+    owned: false,
+  }));
 
   $view.innerHTML = `
     <h2 style="margin-top:0;">${editing ? "Edit Game" : "Add a Game"}</h2>
+    ${prefill ? `<div class="note-banner">Pre-filled from BoardGameGeek${game.bggWeight ? ` — difficulty estimated from a community weight of ${game.bggWeight.toFixed(1)}/5 (${game.bggWeightVotes} ratings)` : ""}. Review and adjust anything before saving.</div>` : ""}
 
     <label>Photo</label>
     <div style="display:flex;gap:12px;align-items:center;">
@@ -397,6 +566,11 @@ async function renderGameForm(id) {
       <span>Mark as favorite</span>
       <input type="checkbox" id="f-fav" ${game.favorite ? "checked" : ""} style="width:20px;height:20px;" />
     </label>
+
+    ${bggCandidates.length ? `
+      <div class="section-title">Expansions Found on BoardGameGeek</div>
+      <div class="card" id="bgg-ext-list"></div>
+    ` : ""}
 
     <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;">
       <span>Expansions / Extensions</span>
@@ -457,6 +631,23 @@ async function renderGameForm(id) {
     renderExtList();
   });
 
+  function renderBggExtList() {
+    const list = document.getElementById("bgg-ext-list");
+    if (!list) return;
+    list.innerHTML = bggCandidates.map((c, i) => `
+      <div class="ext-item">
+        <label style="display:flex;align-items:center;gap:10px;flex:1;margin:0;font-weight:400;color:var(--text);">
+          <input type="checkbox" data-i="${i}" class="bgg-ext-check" style="width:20px;height:20px;flex-shrink:0;" ${c.owned ? "checked" : ""} />
+          <span>${escapeHtml(c.name)}${c.maxPlayers ? ` <span class="pill">up to ${c.maxPlayers}p</span>` : ""}</span>
+        </label>
+      </div>
+    `).join("");
+    list.querySelectorAll(".bgg-ext-check").forEach((cb) => {
+      cb.addEventListener("change", () => { bggCandidates[Number(cb.dataset.i)].owned = cb.checked; });
+    });
+  }
+  renderBggExtList();
+
   document.getElementById("cancel-btn").addEventListener("click", () => history.back());
   if (editing) {
     document.getElementById("delete-btn").addEventListener("click", async () => {
@@ -471,13 +662,22 @@ async function renderGameForm(id) {
   document.getElementById("save-btn").addEventListener("click", async () => {
     const name = document.getElementById("f-name").value.trim();
     if (!name) { toast("Please enter a game name"); return; }
+    const finalMaxPlayers = Number(document.getElementById("f-maxp").value) || null;
+
+    const ownedBggExtensions = bggCandidates
+      .filter((c) => c.owned)
+      .map((c) => ({
+        name: c.name,
+        addsPlayers: c.maxPlayers && finalMaxPlayers && c.maxPlayers > finalMaxPlayers ? c.maxPlayers - finalMaxPlayers : 0,
+      }));
+
     const updated = {
       ...game,
       name,
       image: pendingImage,
       difficulty: selectedDiff,
       minPlayers: Number(document.getElementById("f-minp").value) || null,
-      maxPlayers: Number(document.getElementById("f-maxp").value) || null,
+      maxPlayers: finalMaxPlayers,
       ageRating: Number(document.getElementById("f-age").value) || null,
       location: document.getElementById("f-loc").value.trim(),
       playTimeMin: Number(document.getElementById("f-tmin").value) || null,
@@ -485,7 +685,7 @@ async function renderGameForm(id) {
       description: document.getElementById("f-desc").value.trim(),
       keywords: document.getElementById("f-keywords").value.split(",").map((s) => s.trim()).filter(Boolean),
       favorite: document.getElementById("f-fav").checked,
-      extensions: extensions.filter((e) => e.name.trim()),
+      extensions: [...extensions.filter((e) => e.name.trim()), ...ownedBggExtensions],
     };
     const saved = await DB.saveGame(updated);
     toast(editing ? "Game updated" : "Game added");
@@ -792,6 +992,7 @@ async function renderHouseholdRoute() {
   removeFab();
   const household = await DB.getMeta("household");
   const members = await DB.getMembers();
+  const bggEndpoint = await getBggEndpoint();
 
   $view.innerHTML = `
     <div class="note-banner">
@@ -808,6 +1009,19 @@ async function renderHouseholdRoute() {
       <button class="link-btn" id="add-member-btn">+ Add</button>
     </div>
     <div class="card" id="members-list"></div>
+
+    <div class="section-title">BoardGameGeek Lookup Service</div>
+    <p style="color:var(--text-dim);font-size:12.5px;margin-top:0;">
+      Lets "Add a Game" auto-fill details from BoardGameGeek instead of typing them in by hand.
+      This needs a small free proxy service — see <code>bgg-proxy/README.md</code> in the project files for
+      a 5-minute setup (Cloudflare Worker or Azure Function, both free). Paste its URL below once it's deployed.
+    </p>
+    <input type="text" id="bgg-endpoint" value="${escapeHtml(bggEndpoint)}" placeholder="https://your-proxy-url.example.com" />
+    <div class="btn-row" style="margin-top:10px;">
+      <button class="btn secondary small" id="bgg-test-btn">Test Connection</button>
+      <button class="btn small" id="bgg-save-btn">Save</button>
+    </div>
+    <p id="bgg-status" style="font-size:12.5px;color:var(--text-dim);min-height:16px;"></p>
 
     <div class="section-title">Invite Someone</div>
     <div class="btn-row">
@@ -830,6 +1044,26 @@ async function renderHouseholdRoute() {
     household.name = e.target.value.trim() || "Our Household";
     await DB.setMeta("household", household);
     toast("Household name saved");
+  });
+
+  const $bggStatus = document.getElementById("bgg-status");
+  document.getElementById("bgg-save-btn").addEventListener("click", async () => {
+    const url = document.getElementById("bgg-endpoint").value.trim();
+    await setBggEndpoint(url);
+    toast(url ? "Lookup service saved" : "Lookup service cleared");
+  });
+  document.getElementById("bgg-test-btn").addEventListener("click", async () => {
+    const url = document.getElementById("bgg-endpoint").value.trim();
+    if (!url) { $bggStatus.textContent = "Enter a URL first."; return; }
+    $bggStatus.textContent = "Testing…";
+    try {
+      const count = await testBggEndpoint(url);
+      $bggStatus.textContent = `✅ Working — got ${count} result(s) for a test search.`;
+      $bggStatus.style.color = "var(--good)";
+    } catch (err) {
+      $bggStatus.textContent = `⚠️ ${err.message}`;
+      $bggStatus.style.color = "var(--danger)";
+    }
   });
 
   function renderMembers() {
